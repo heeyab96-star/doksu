@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>선생님과 함께하는 독서활동</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+            color: #1e293b;
+        }
+        .mirror-mode {
+            transform: scaleX(-1);
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-start p-3 sm:p-6 bg-gradient-to-br from-amber-50/50 via-rose-50/30 to-indigo-50/40">
+
+    <div id="app" class="w-full max-w-md bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl overflow-hidden flex flex-col min-h-[90vh] border border-white/80">
+        <div id="view-container" class="flex-1 flex flex-col">
+            <!-- 동적 뷰가 여기에 렌더링됨 -->
+        </div>
+    </div>
+
+    <div id="camera-modal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center z-50 hidden p-4">
+        <div class="w-full max-w-sm bg-slate-900 rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-slate-700">
+            <div class="p-4 bg-slate-800 text-white flex justify-between items-center border-b border-slate-700/50">
+                <h3 class="text-xs font-extrabold tracking-wider flex items-center space-x-2 text-rose-400 uppercase">
+                    <span>📸</span>
+                    <span>인증샷 카메라 촬영</span>
+                </h3>
+                <div class="flex items-center space-x-2">
+                    <button id="switch-camera-btn" type="button" class="bg-slate-700 hover:bg-slate-600 text-[11px] font-semibold px-2.5 py-1 rounded-xl text-slate-200 flex items-center space-x-1 border border-slate-600 transition">
+                        <span>🔄</span>
+                        <span id="camera-facing-label">전면(셀카)</span>
+                    </button>
+                    <button id="close-camera-btn" type="button" class="text-slate-400 hover:text-white text-xl font-bold px-1.5">&times;</button>
+                </div>
+            </div>
+            
+            <div class="relative w-full bg-black flex-1 flex items-center justify-center min-h-[360px] max-h-[60vh] overflow-hidden">
+                <video id="camera-video" autoplay playsinline muted class="w-full h-full object-cover mirror-mode"></video>
+                <canvas id="camera-canvas" class="hidden"></canvas>
+            </div>
+
+            <div class="p-4 bg-slate-800 flex flex-col items-center space-y-3">
+                <p id="camera-status-text" class="text-xs text-slate-400 font-medium">카메라를 준비 중임...</p>
+                <div class="flex justify-center items-center space-x-6 w-full">
+                    <button id="capture-btn" type="button" class="w-16 h-16 bg-white rounded-full border-4 border-rose-500 shadow-xl hover:bg-rose-50 transition active:scale-95 flex items-center justify-center">
+                        <div class="w-11 h-11 bg-rose-500 rounded-full"></div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 선생님의 Google Apps Script 웹 앱 URL (필요시 입력)
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxEInnAe_ZITaaC39iP_-dtxZ6Xq2H2v5aI9hy1bF82kGMDgYd4RJ0ix3QgXVjbm6gA/exec";
+
+        let state = {
+            nickname: localStorage.getItem('reading_app_nickname') || '',
+            streak: parseInt(localStorage.getItem('reading_app_streak') || '0', 10),
+            currentTab: 'challenge',
+            bookTitle: localStorage.getItem('reading_app_book_title') || '',
+            readPages: localStorage.getItem('reading_app_pages') || '',
+            quote: localStorage.getItem('reading_app_quote') || '',
+            imagePreview: localStorage.getItem('reading_app_image') || null,
+            feedList: JSON.parse(localStorage.getItem('reading_app_feed') || '[]'),
+            isLoggedIn: !!localStorage.getItem('reading_app_nickname')
+        };
+
+        let mediaStream = null;
+        let currentFacingMode = 'user';
+
+        function showMessage(msg, callback) {
+            const existingModal = document.getElementById('custom-modal');
+            if (existingModal) existingModal.remove();
+
+            const modal = document.createElement('div');
+            modal.id = 'custom-modal';
+            modal.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4';
+            modal.innerHTML = `
+                <div class="bg-white rounded-3xl p-6 max-w-xs w-full shadow-2xl text-center border border-slate-100 animate-in fade-in zoom-in duration-200">
+                    <div class="w-12 h-12 bg-rose-100 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-3 text-xl font-bold">✨</div>
+                    <p class="text-sm font-semibold text-slate-800 mb-5 leading-relaxed">${msg}</p>
+                    <button id="modal-ok-btn" type="button" class="w-full bg-gradient-to-r from-rose-500 to-amber-500 text-white py-3 rounded-2xl font-bold text-sm shadow-lg shadow-rose-200 hover:opacity-95 transition">확인함</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('modal-ok-btn').onclick = () => {
+                modal.remove();
+                if (callback) callback();
+            };
+        }
+
+        function showConfirm(msg, onConfirm) {
+            const existingModal = document.getElementById('custom-confirm-modal');
+            if (existingModal) existingModal.remove();
+
+            const modal = document.createElement('div');
+            modal.id = 'custom-confirm-modal';
+            modal.className = 'fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4';
+            modal.innerHTML = `
+                <div class="bg-white rounded-3xl p-6 max-w-xs w-full shadow-2xl text-center border border-slate-100 animate-in fade-in zoom-in duration-200">
+                    <div class="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-3 text-xl font-bold">⚠️</div>
+                    <p class="text-sm font-semibold text-slate-800 mb-5 leading-relaxed">${msg}</p>
+                    <div class="flex space-x-2">
+                        <button id="confirm-cancel-btn" type="button" class="flex-1 bg-slate-100 text-slate-600 py-3 rounded-2xl font-bold text-sm hover:bg-slate-200 transition">취소</button>
+                        <button id="confirm-ok-btn" type="button" class="flex-1 bg-gradient-to-r from-rose-500 to-amber-500 text-white py-3 rounded-2xl font-bold text-sm shadow-lg shadow-rose-200 hover:opacity-95 transition">확인</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            document.getElementById('confirm-cancel-btn').onclick = () => modal.remove();
+            document.getElementById('confirm-ok-btn').onclick = () => {
+                modal.remove();
+                if (onConfirm) onConfirm();
+            };
+        }
+
+        async function syncDataToGAS(payload) {
+            if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("YOUR_GOOGLE_APPS_SCRIPT_WEB_URL_HERE")) {
+                console.warn("GAS 웹 앱 URL이 설정되지 않음. 로컬에만 저장됨.");
+                return;
+            }
+            try {
+                await fetch(GAS_WEB_APP_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    cache: 'no-cache',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } catch (err) {
+                console.error("GAS 전송 실패:", err);
+            }
+        }
+
+        function render() {
+            const container = document.getElementById('view-container');
+            if (!container) return;
+            if (!state.isLoggedIn) {
+                container.innerHTML = renderLoginView();
+                bindLoginEvents();
+            } else {
+                container.innerHTML = renderMainView();
+                bindMainEvents();
+            }
+        }
+
+        function renderLoginView() {
+            return `
+                <div class="p-6 sm:p-8 flex flex-col justify-center flex-1 text-center">
+                    <div class="mb-8">
+                        <div class="w-20 h-20 bg-gradient-to-tr from-rose-500 via-amber-400 to-indigo-500 text-white rounded-3xl flex items-center justify-center mx-auto mb-5 text-4xl shadow-xl shadow-rose-200">📖</div>
+                        <h1 class="text-2xl font-extrabold text-slate-900 mb-2">선생님과 함께하는 독서활동</h1>
+                        <p class="text-xs text-slate-500 font-medium">매일 아침 책을 읽고 인증하는 공간임.</p>
+                    </div>
+                    <form id="login-form" class="space-y-4">
+                        <div class="text-left">
+                            <label class="block text-xs font-bold text-slate-600 mb-1.5 ml-1">닉네임 (이름 또는 별명)</label>
+                            <input type="text" id="nickname-input" required placeholder="예: 독서왕김고딩" 
+                                class="w-full px-4 py-3.5 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-400 text-slate-800 bg-slate-50/50 text-sm font-medium transition">
+                        </div>
+                        <button type="submit" class="w-full bg-gradient-to-r from-rose-500 via-pink-500 to-amber-500 text-white font-bold py-4 rounded-2xl shadow-xl shadow-rose-200 hover:opacity-95 transition active:scale-[0.98]">
+                            독서 활동 시작하기
+                        </button>
+                    </form>
+                </div>
+            `;
+        }
+
+        function bindLoginEvents() {
+            const form = document.getElementById('login-form');
+            if (form) {
+                form.onsubmit = (e) => {
+                    e.preventDefault();
+                    const inputEl = document.getElementById('nickname-input');
+                    const val = inputEl ? inputEl.value.trim() : '';
+                    if (!val) {
+                        showMessage("닉네임을 정확히 입력함.");
+                        return;
+                    }
+                    state.nickname = val;
+                    state.isLoggedIn = true;
+                    localStorage.setItem('reading_app_nickname', val);
+                    render();
+                };
+            }
+        }
+
+        function renderMainView() {
+            return `
+                <div class="bg-gradient-to-r from-rose-500 via-pink-500 to-amber-500 text-white p-5 rounded-b-[2.5rem] shadow-lg relative overflow-hidden">
+                    <div class="absolute -right-6 -top-6 w-28 h-28 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+                    <div class="flex justify-between items-center mb-4 relative z-10">
+                        <div class="flex items-center space-x-2">
+                            <span class="bg-white/20 backdrop-blur-md text-[11px] px-3 py-1 rounded-full font-bold shadow-sm">1학년 3반</span>
+                            <span class="font-bold text-sm tracking-tight">${escapeHtml(state.nickname)}님</span>
+                        </div>
+                        <button id="logout-btn" type="button" class="text-xs bg-white/20 hover:bg-white/30 backdrop-blur-md text-white px-3 py-1.5 rounded-xl font-semibold transition">로그아웃</button>
+                    </div>
+
+                    <div class="bg-black/10 backdrop-blur-md rounded-2xl p-4 flex items-center justify-between border border-white/20 relative z-10 shadow-inner">
+                        <div>
+                            <p class="text-[11px] text-rose-100 font-semibold mb-0.5">나의 누적 독서 인증 일수</p>
+                            <h2 class="text-3xl font-extrabold tracking-tight">${state.streak} <span class="text-base font-bold opacity-90">일째 달성 중</span></h2>
+                        </div>
+                        <div class="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center text-2xl shadow-sm">🏆</div>
+                    </div>
+                </div>
+
+                <div class="flex border-b border-slate-100 px-6 pt-3 bg-white/50 backdrop-blur-sm">
+                    <button type="button" data-tab="challenge" class="flex-1 pb-3 text-xs font-bold text-center border-b-2 transition ${state.currentTab === 'challenge' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}">
+                        오늘의 독서 기록
+                    </button>
+                    <button type="button" data-tab="feed" class="flex-1 pb-3 text-xs font-bold text-center border-b-2 transition ${state.currentTab === 'feed' ? 'border-rose-500 text-rose-500' : 'border-transparent text-slate-400 hover:text-slate-600'}">
+                        우리 반 피드
+                    </button>
+                </div>
+
+                <div class="flex-1 p-5 overflow-y-auto bg-slate-50/40">
+                    ${state.currentTab === 'challenge' ? renderChallengeTab() : renderFeedTab()}
+                </div>
+            `;
+        }
+
+        function renderChallengeTab() {
+            return `
+                <div class="space-y-4">
+                    <div class="bg-white p-4.5 rounded-3xl shadow-sm border border-slate-100/80 space-y-3.5">
+                        <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center space-x-1.5">
+                            <span class="w-6 h-6 rounded-lg bg-rose-100 text-rose-500 flex items-center justify-center text-xs">📚</span>
+                            <span>오늘의 책 기록하기</span>
+                        </h3>
+
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-500 mb-1 ml-0.5">책 제목</label>
+                            <input type="text" id="book-title-input" value="${escapeHtml(state.bookTitle)}" placeholder="읽고 있는 책 제목 입력"
+                                class="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-400 bg-slate-50/50">
+                        </div>
+
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-500 mb-1 ml-0.5">읽은 페이지</label>
+                            <input type="text" id="read-pages-input" value="${escapeHtml(state.readPages)}" placeholder="예: 45p ~ 80p (또는 35페이지)"
+                                class="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-400 bg-slate-50/50">
+                        </div>
+
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-500 mb-1 ml-0.5">기억에 남는 문장 / 느낀점</label>
+                            <textarea id="quote-input" rows="3" placeholder="감동 깊었던 문장이나 기억에 남는 내용을 기록함."
+                                class="w-full p-3.5 text-xs font-medium rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-slate-50/50 text-slate-800 resize-none">${escapeHtml(state.quote)}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-4.5 rounded-3xl shadow-sm border border-slate-100/80">
+                        <label class="block text-xs font-extrabold text-slate-800 mb-2.5 uppercase tracking-wider flex items-center space-x-1.5">
+                            <span class="w-6 h-6 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center text-xs">📸</span>
+                            <span>독서 인증샷 등록</span>
+                        </label>
+                        
+                        <div id="image-preview-container" class="mb-3.5 w-full h-44 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden relative shadow-inner">
+                            ${state.imagePreview ? 
+                                `<img src="${state.imagePreview}" class="w-full h-full object-cover">` : 
+                                `<div class="text-center p-4 text-slate-400">
+                                    <span class="text-3xl block mb-1">🤳</span>
+                                    <span class="text-xs font-semibold">셀카 또는 책 인증 사진을 등록함</span>
+                                 </div>`
+                            }
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5 mb-3.5">
+                            <label class="cursor-pointer bg-amber-50 text-amber-700 border border-amber-200/70 text-xs font-bold py-3 px-3 rounded-2xl text-center hover:bg-amber-100 transition flex items-center justify-center space-x-1 shadow-sm">
+                                <span>📁 파일 등록</span>
+                                <input type="file" id="file-upload" accept="image/*" class="hidden">
+                            </label>
+                            <button type="button" id="open-camera-btn" class="cursor-pointer bg-rose-50 text-rose-600 border border-rose-200/70 text-xs font-bold py-3 px-3 rounded-2xl text-center hover:bg-rose-100 transition flex items-center justify-center space-x-1 shadow-sm">
+                                <span>🤳 셀카 촬영하기</span>
+                            </button>
+                        </div>
+
+                        <button type="button" id="submit-auth-btn" class="w-full bg-gradient-to-r from-rose-500 via-pink-500 to-amber-500 text-white font-bold py-3.5 rounded-2xl text-sm shadow-lg shadow-rose-200 hover:opacity-95 transition active:scale-[0.98]">
+                            오늘 독서 인증 완료하기 (+1일)
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderFeedTab() {
+            const feeds = state.feedList;
+            return `
+                <div class="space-y-3.5">
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-xs font-bold text-slate-500">우리 반 친구들의 독서 현황표임.</p>
+                        <span class="text-xs text-rose-500 font-extrabold bg-rose-50 px-2.5 py-1 rounded-full">총 ${feeds.length}건 작성됨</span>
+                    </div>
+
+                    ${feeds.length === 0 ? `
+                        <div class="text-center py-14 bg-white rounded-3xl border border-slate-100/80 shadow-sm">
+                            <div class="text-4xl mb-3">📚</div>
+                            <p class="text-sm font-bold text-slate-600">아직 작성된 독서 피드가 없음.</p>
+                            <p class="text-xs font-medium text-slate-400 mt-1">오늘 읽은 책을 인증하고 첫 피드를 등록함!</p>
+                        </div>
+                    ` : `
+                        <div class="bg-white rounded-3xl shadow-sm border border-slate-100/80 overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse min-w-[320px]">
+                                    <thead>
+                                        <tr class="bg-slate-50/80 border-b border-slate-100 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
+                                            <th class="p-3">닉네임</th>
+                                            <th class="p-3">책 제목</th>
+                                            <th class="p-3">읽은 페이지</th>
+                                            <th class="p-3">기억에 남는 문장</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100 text-xs text-slate-700">
+                                        ${feeds.map(item => `
+                                            <tr class="hover:bg-rose-50/30 transition">
+                                                <td class="p-3 font-extrabold text-rose-600 whitespace-nowrap">
+                                                    <div class="flex items-center space-x-2">
+                                                        <div class="w-7 h-7 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center text-[11px] font-extrabold flex-shrink-0 shadow-sm">
+                                                            ${escapeHtml(item.nickname ? item.nickname.charAt(0) : '독')}
+                                                        </div>
+                                                        <span>${escapeHtml(item.nickname || '익명')}</span>
+                                                    </div>
+                                                </td>
+                                                <td class="p-3 font-bold text-slate-800 whitespace-nowrap">${escapeHtml(item.bookTitle || '-')}</td>
+                                                <td class="p-3 text-emerald-600 font-semibold whitespace-nowrap">${escapeHtml(item.readPages || '-')}</td>
+                                                <td class="p-3 max-w-[150px] truncate text-slate-600 font-medium" title="${escapeHtml(item.quote || '')}">${escapeHtml(item.quote || '-')}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        // Helper to avoid XSS / raw string issues
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function bindMainEvents() {
+            const logoutBtn = document.getElementById('logout-btn');
+            if (logoutBtn) {
+                logoutBtn.onclick = () => {
+                    showConfirm("정말 로그아웃 하시겠습니까?", () => {
+                        localStorage.removeItem('reading_app_nickname');
+                        state.nickname = '';
+                        state.isLoggedIn = false;
+                        render();
+                    });
+                };
+            }
+
+            document.querySelectorAll('[data-tab]').forEach(btn => {
+                btn.onclick = (e) => {
+                    saveInputState();
+                    state.currentTab = e.currentTarget.getAttribute('data-tab');
+                    render();
+                };
+            });
+
+            if (state.currentTab === 'challenge') {
+                // 실시간 입력값 상태 동기화 바인딩
+                const bookTitleInput = document.getElementById('book-title-input');
+                const readPagesInput = document.getElementById('read-pages-input');
+                const quoteInput = document.getElementById('quote-input');
+
+                if (bookTitleInput) {
+                    bookTitleInput.oninput = (e) => {
+                        state.bookTitle = e.target.value;
+                        localStorage.setItem('reading_app_book_title', state.bookTitle);
+                    };
+                }
+                if (readPagesInput) {
+                    readPagesInput.oninput = (e) => {
+                        state.readPages = e.target.value;
+                        localStorage.setItem('reading_app_pages', state.readPages);
+                    };
+                }
+                if (quoteInput) {
+                    quoteInput.oninput = (e) => {
+                        state.quote = e.target.value;
+                        localStorage.setItem('reading_app_quote', state.quote);
+                    };
+                }
+
+                const fileUpload = document.getElementById('file-upload');
+                if (fileUpload) {
+                    fileUpload.onchange = (e) => {
+                        saveInputState();
+                        const file = e.target.files[0];
+                        if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                                state.imagePreview = event.target.result;
+                                localStorage.setItem('reading_app_image', state.imagePreview);
+                                render();
+                            };
+                            reader.readAsDataURL(file);
+                        }
+                    };
+                }
+
+                const openCameraBtn = document.getElementById('open-camera-btn');
+                if (openCameraBtn) {
+                    openCameraBtn.onclick = () => {
+                        saveInputState();
+                        startCameraModal();
+                    };
+                }
+
+                const submitAuthBtn = document.getElementById('submit-auth-btn');
+                if (submitAuthBtn) {
+                    submitAuthBtn.onclick = async () => {
+                        saveInputState();
+                        if (!state.bookTitle.trim()) {
+                            showMessage("책 제목을 입력함.");
+                            return;
+                        }
+                        if (!state.imagePreview) {
+                            showMessage("인증샷 사진을 등록함.");
+                            return;
+                        }
+
+                        state.streak += 1;
+                        localStorage.setItem('reading_app_streak', state.streak);
+
+                        const newFeedItem = {
+                            nickname: state.nickname,
+                            streak: state.streak,
+                            bookTitle: state.bookTitle,
+                            readPages: state.readPages,
+                            quote: state.quote,
+                            image: state.imagePreview,
+                            timestamp: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                        };
+
+                        state.feedList.unshift(newFeedItem);
+                        localStorage.setItem('reading_app_feed', JSON.stringify(state.feedList));
+
+                        // 입력값 초기화
+                        state.bookTitle = '';
+                        state.readPages = '';
+                        state.quote = '';
+                        state.imagePreview = null;
+                        localStorage.removeItem('reading_app_book_title');
+                        localStorage.removeItem('reading_app_pages');
+                        localStorage.removeItem('reading_app_quote');
+                        localStorage.removeItem('reading_app_image');
+
+                        await syncDataToGAS(newFeedItem);
+
+                        showMessage("오늘의 독서 인증이 완료됨! 수고함.", () => {
+                            state.currentTab = 'feed';
+                            render();
+                        });
+                    };
+                }
+            }
+        }
+
+        function saveInputState() {
+            const bookTitleInput = document.getElementById('book-title-input');
+            const readPagesInput = document.getElementById('read-pages-input');
+            const quoteInput = document.getElementById('quote-input');
+
+            if (bookTitleInput) {
+                state.bookTitle = bookTitleInput.value;
+                localStorage.setItem('reading_app_book_title', state.bookTitle);
+            }
+            if (readPagesInput) {
+                state.readPages = readPagesInput.value;
+                localStorage.setItem('reading_app_pages', state.readPages);
+            }
+            if (quoteInput) {
+                state.quote = quoteInput.value;
+                localStorage.setItem('reading_app_quote', state.quote);
+            }
+        }
+
+        function startCameraModal() {
+            const modal = document.getElementById('camera-modal');
+            const video = document.getElementById('camera-video');
+            const statusText = document.getElementById('camera-status-text');
+            const facingLabel = document.getElementById('camera-facing-label');
+            if (!modal || !video) return;
+
+            modal.classList.remove('hidden');
+            
+            function openStream(facing) {
+                stopCameraStream();
+
+                if (facing === 'user') {
+                    video.classList.add('mirror-mode');
+                    if (facingLabel) facingLabel.textContent = "전면(셀카)";
+                } else {
+                    video.classList.remove('mirror-mode');
+                    if (facingLabel) facingLabel.textContent = "후면(책촬영)";
+                }
+
+                if (statusText) statusText.textContent = "카메라를 준비 중임...";
+
+                const constraints = {
+                    video: { 
+                        facingMode: facing,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+
+                navigator.mediaDevices.getUserMedia(constraints)
+                    .then(stream => {
+                        mediaStream = stream;
+                        video.srcObject = stream;
+                        if (statusText) statusText.textContent = "촬영 버튼을 눌러 사진을 찍음.";
+                    })
+                    .catch(err => {
+                        console.warn("기본 카메라 오픈 실패, 폴백 시도:", err);
+                        navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+                            .then(stream => {
+                                mediaStream = stream;
+                                video.srcObject = stream;
+                                if (statusText) statusText.textContent = "촬영 버튼을 눌러 사진을 찍음.";
+                            })
+                            .catch(fallbackErr => {
+                                console.error("카메라 접근 불가:", fallbackErr);
+                                stopCameraStream();
+                                modal.classList.add('hidden');
+                                triggerFileInputFallback();
+                            });
+                    });
+            }
+
+            openStream(currentFacingMode);
+
+            const switchBtn = document.getElementById('switch-camera-btn');
+            if (switchBtn) {
+                switchBtn.onclick = () => {
+                    currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+                    openStream(currentFacingMode);
+                };
+            }
+
+            const closeBtn = document.getElementById('close-camera-btn');
+            if (closeBtn) {
+                closeBtn.onclick = () => {
+                    stopCameraStream();
+                    modal.classList.add('hidden');
+                };
+            }
+
+            const captureBtn = document.getElementById('capture-btn');
+            if (captureBtn) {
+                captureBtn.onclick = () => {
+                    if (!video.videoWidth || !video.videoHeight) {
+                        if (statusText) statusText.textContent = "카메라 준비 중... 다시 촬영 버튼을 눌러주세요.";
+                        return;
+                    }
+
+                    const canvas = document.getElementById('camera-canvas');
+                    if (!canvas) return;
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext('2d');
+
+                    if (currentFacingMode === 'user') {
+                        ctx.translate(canvas.width, 0);
+                        ctx.scale(-1, 1);
+                    }
+
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    state.imagePreview = canvas.toDataURL('image/jpeg', 0.85);
+                    localStorage.setItem('reading_app_image', state.imagePreview);
+                    
+                    stopCameraStream();
+                    modal.classList.add('hidden');
+                    render();
+                };
+            }
+        }
+
+        function triggerFileInputFallback() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        state.imagePreview = event.target.result;
+                        localStorage.setItem('reading_app_image', state.imagePreview);
+                        render();
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+            input.click();
+        }
+
+        function stopCameraStream() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+        }
+
+        window.onload = function() {
+            render();
+        };
+    </script>
+</body>
+</html>
